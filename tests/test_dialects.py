@@ -60,3 +60,7 @@ class TestDialects(unittest.TestCase):
     def test_sqlite(self):
         sql = transpile('SELECT CAST(`a`.`b` AS SMALLINT) FROM foo', read='sqlite', write='sqlite')[0]
         self.assertEqual(sql, 'SELECT CAST(`a`.`b` AS INTEGER) FROM foo')
+
+    def test_msaccess(self):
+        sql = transpile('SELECT [a].[b] FROM [foo]', read='msacess', write='msacess')[0]
+        self.assertEqual(sql, 'SELECT [a].[b] FROM [foo]')

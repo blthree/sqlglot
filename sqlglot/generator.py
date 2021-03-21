@@ -35,7 +35,9 @@ class Generator:
     def __init__(self, **opts):
         self.transforms = {**self.TRANSFORMS, **(opts.get('transforms') or {})}
         self.pretty = opts.get('pretty')
-        self.identifier = opts.get('identifier') or '"'
+        self.identifier = opts.get('identifier') or ('"','"')
+        if len(self.identifier) == 1:
+            self.identifier = (self.identifier,self.identifier)
         self.identify = opts.get('identify', False)
         self.quote = opts.get('quote') or "'"
         self.pad = opts.get('pad', 2)
@@ -100,9 +102,9 @@ class Generator:
         if isinstance(expression, Token):
             text = expression.text
             if expression.token_type == TokenType.IDENTIFIER:
-                text = f"{self.identifier}{text[1:-1]}{self.identifier}"
+                text = f"{self.identifier[0]}{text[1:-1]}{self.identifier[1]}"
             elif self.identify and identify:
-                text = f"{self.identifier}{text}{self.identifier}"
+                text = f"{self.identifier[0]}{text}{self.identifier[1]}"
             return text
 
         return getattr(self, f"{expression.key}_sql")(expression)

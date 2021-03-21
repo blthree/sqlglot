@@ -208,8 +208,11 @@ class Tokenizer:
 
     def __init__(self, **opts):
         self.quote = opts.get('quote') or "'"
-        self.identifier = opts.get('identifier') or '"'
+        self.identifier = opts.get('identifier') or ('"','"')
+        if len(self.identifier) == 1:
+            self.identifier = (self.identifier,self.identifier)
         self.single_tokens = {**self.SINGLE_TOKENS, **opts.get('single_tokens', {})}
+        [self.single_tokens.pop(identifier, None) for identifier in self.identifier]
         self.keywords = {**self.KEYWORDS, **opts.get('keywords', {})}
         self.white_space = {**self.WHITE_SPACE, **opts.get('white_space', {})}
         self.reset()
@@ -262,7 +265,7 @@ class Tokenizer:
                 self._scan_number()
             elif self._char == self.quote:
                 self._scan_string()
-            elif self._char == self.identifier:
+            elif self._char in self.identifier:
                 self._scan_identifier()
             else:
                 self._scan_var()
@@ -308,7 +311,7 @@ class Tokenizer:
         self._add(TokenType.STRING)
 
     def _scan_identifier(self):
-        while self._peek != self.identifier:
+        while self._peek not in self.identifier:
             if self._end:
                 raise RuntimeError(f"Missing {self.identifier} from {self._line}:{self._start}")
             self._advance()

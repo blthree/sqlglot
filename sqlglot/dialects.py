@@ -94,6 +94,11 @@ class Spark(Dialect):
 
     identifier = '`'
 
+class MSAcess(Dialect):
+    identifier = ('[',']')
+
+class TSQL(Dialect):
+    identifier = ('[',']')
 
 class SQLite(Dialect):
     transforms = {
