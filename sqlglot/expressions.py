@@ -1,3 +1,5 @@
+import weakref
+
 from sqlglot.tokens import TokenType
 
 
@@ -9,6 +11,35 @@ class Expression:
         self.key = self.__class__.__name__.lower()
         self.args = args
         self.validate()
+        self._parent = None
+
+    @property
+    def parent(self):
+        return self._parent() if self._parent else None
+
+    @parent.setter
+    def parent(self, new_parent):
+        self._parent = weakref.ref(new_parent)
+
+    def find(self, expression_type):
+        return next(self.findall(expression_type), None)
+
+    def findall(self, expression_type):
+        for expression, parent, key in self.walk():
+            if isinstance(expression, expression_type):
+                yield expression, parent, key
+
+    def walk(self, parent=None, key=None):
+        yield self, parent, key
+
+        for k, v in self.args.items():
+            nodes = v if isinstance(v, list) else [v]
+
+            for node in nodes:
+                if isinstance(node, Expression):
+                    yield from node.walk(self, k)
+                else:
+                    yield node, self, k
 
     def validate(self):
         for k, v in self.args.items():
@@ -25,7 +56,7 @@ class Expression:
     def to_s(self, level=0):
         indent = '' if not level else "\n"
         indent += ''.join(['  '] * level)
-        left = f"({self.token_type.name} "
+        left = f"({self.key.upper()} "
 
         args = {
             k: ', '.join(
@@ -42,6 +73,11 @@ class Expression:
         return indent + left + right
 
 
+class Create(Expression):
+    token_type = TokenType.CREATE
+    arg_types = {'this': True, 'kind': True, 'expression': False, 'exists': False, 'file_format': False}
+
+
 class CTE(Expression):
     token_type = TokenType.WITH
     arg_types = {'this': True, 'expressions': True}
@@ -50,6 +86,26 @@ class CTE(Expression):
 class Column(Expression):
     token_type = TokenType.COLUMN
     arg_types = {'this': True, 'db': False, 'table': False}
+
+
+class Comment(Expression):
+    token_type = TokenType.COMMENT
+    arg_types = {'this': True, 'comment': True}
+
+
+class Drop(Expression):
+    token_type = TokenType.DROP
+    arg_types = {'this': False, 'kind': False, 'exists': False}
+
+
+class FileFormat(Expression):
+    token_type = TokenType.FORMAT
+    arg_types = {'this': True}
+
+
+class Hint(Expression):
+    token_type = TokenType.HINT
+    arg_types = {'this': True}
 
 
 class Table(Expression):
@@ -67,6 +123,11 @@ class Join(Expression):
     arg_types = {'this': True, 'expression': True, 'on': True, 'side': False, 'kind': False}
 
 
+class Lateral(Expression):
+    token_type = TokenType.LATERAL
+    arg_types = {'this': True, 'outer': False, 'function': True, 'table': False, 'columns': False}
+
+
 class Order(Expression):
     token_type = TokenType.ORDER
     arg_types = {'this': True, 'expressions': True, 'desc': False}
@@ -77,9 +138,14 @@ class Union(Expression):
     arg_types = {'this': True, 'expression': True, 'distinct': True}
 
 
+class Unnest(Expression):
+    token_type = TokenType.UNNEST
+    arg_types = {'expressions': True, 'ordinality': False, 'table': False, 'columns': False}
+
+
 class Select(Expression):
     token_type = TokenType.SELECT
-    arg_types = {'expressions': True}
+    arg_types = {'expressions': True, 'hint': False}
 
 
 class Window(Expression):
@@ -181,7 +247,7 @@ class Neg(Unary):
 # Special Functions
 class Alias(Expression):
     token_type = TokenType.ALIAS
-    arg_types = {'this': True, 'to': True}
+    arg_types = {'this': True, 'alias': True}
 
 
 class Array(Expression):
@@ -240,3 +306,7 @@ class Count(Func):
 
 class If(Func):
     arg_types = {'condition': True, 'true': True, 'false': False}
+
+
+class JSONPath(Func):
+    arg_types = {'this': True, 'path': True}

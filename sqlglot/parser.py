@@ -85,15 +85,23 @@ class Parser:
             self._index = -1
             self._advance()
             self._tokens = tokens
+
             try:
                 expressions.append(self._parse_statement())
                 if self._index < len(self._tokens):
-                    self.raise_error('Invalid expression', self._prev)
+                    self.raise_error('Invalid expression / Unexpected token')
             except ParseError as e:
                 if self.error_level == ErrorLevel.WARN:
                     logging.error(e)
                 elif self.error_level == ErrorLevel.RAISE:
                     raise e
+
+        for expression in expressions:
+            if not isinstance(expression, exp.Expression):
+                continue
+            for node, parent, _ in expression.walk():
+                if hasattr(node, 'parent') and parent:
+                    node.parent = parent
 
         return expressions
 
@@ -144,11 +152,90 @@ class Parser:
             return None
 
     def _parse_statement(self):
-        if not self._match(TokenType.WITH):
-            return self._parse_select()
+        if self._match(TokenType.CREATE):
+            return self._parse_create()
 
-        expressions = self._parse_csv(self._parse_cte)
-        return exp.CTE(this=self._parse_select(), expressions=expressions)
+        if self._match(TokenType.DROP):
+            return self._parse_drop()
+
+        if self._match(TokenType.WITH):
+            expressions = self._parse_csv(self._parse_cte)
+            return exp.CTE(this=self._parse_select(), expressions=expressions)
+
+        select = self._parse_select()
+
+        if select:
+            return select
+
+        return self._parse_expression()
+
+    def _parse_drop(self):
+        if self._match(TokenType.TABLE):
+            kind = 'table'
+        elif self._match(TokenType.VIEW):
+            kind = 'view'
+        else:
+            self.raise_error('Expected TABLE or View')
+
+        this = self._parse_table()
+
+        if self._match(TokenType.IF):
+            self._match(TokenType.EXISTS)
+            exists = True
+        else:
+            exists = False
+
+        return exp.Drop(this=this, exists=exists, kind=kind)
+
+    def _parse_create(self):
+        if not self._match(TokenType.TABLE, TokenType.VIEW):
+            self.raise_error('Expected TABLE or View')
+
+        create_token = self._prev
+
+        if self._match(TokenType.IF):
+            self._match(TokenType.NOT)
+            self._match(TokenType.EXISTS)
+            exists = True
+        else:
+            exists = False
+
+        this = self._parse_table()
+
+        if create_token.token_type == TokenType.TABLE:
+            if self._match(TokenType.STORED):
+                self._match(TokenType.ALIAS)
+                file_format = exp.FileFormat(this=self._parse_id_var())
+            elif self._match(TokenType.WITH):
+                self._match(TokenType.L_PAREN)
+                self._match(TokenType.FORMAT)
+                self._match(TokenType.EQ)
+                file_format = exp.FileFormat(this=self._parse_primary())
+                if not self._match(TokenType.R_PAREN):
+                    self.raise_error('Expected ) after format')
+            else:
+                file_format = None
+
+            self._match(TokenType.ALIAS)
+
+            return exp.Create(
+                this=this,
+                kind='table',
+                expression=self._parse_select(),
+                exists=exists,
+                file_format=file_format,
+            )
+
+        if create_token.token_type == TokenType.VIEW:
+            self._match(TokenType.ALIAS)
+
+            return exp.Create(
+                this=this,
+                kind='view',
+                expression=self._parse_select(),
+                exists=exists,
+            )
+        return None
 
     def _parse_cte(self):
         if not self._match(TokenType.IDENTIFIER, TokenType.VAR):
@@ -165,22 +252,53 @@ class Parser:
         if not self._match(TokenType.SELECT):
             return None
 
-        this = exp.Select(expressions=self._parse_csv(self._parse_expression))
+        hint = self._parse_hint()
+        this = exp.Select(expressions=self._parse_csv(self._parse_expression), hint=hint)
         this = self._parse_from(this)
+        this = self._parse_lateral(this)
         this = self._parse_join(this)
         this = self._parse_where(this)
         this = self._parse_group(this)
         this = self._parse_having(this)
         this = self._parse_order(this)
         this = self._parse_union(this)
-
         return this
+
+    def _parse_hint(self):
+        if self._match(TokenType.HINT):
+            hint = self._parse_primary()
+            if not self._match(TokenType.COMMENT_END):
+                self.raise_error('Expected */ after HINT')
+            return exp.Hint(this=hint)
+        return None
 
     def _parse_from(self, this):
         if not self._match(TokenType.FROM):
             return this
 
         return exp.From(this=self._parse_table(), expression=this)
+
+    def _parse_lateral(self, this):
+        if not self._match(TokenType.LATERAL):
+            return this
+
+        if not self._match(TokenType.VIEW):
+            self.raise_error('Expected VIEW afteral LATERAL')
+
+        outer = self._match(TokenType.OUTER)
+        function = self._parse_primary()
+        table = self._parse_id_var()
+
+        if self._match(TokenType.ALIAS):
+            columns = self._parse_csv(self._parse_id_var)
+
+        return exp.Lateral(
+            this=this,
+            outer=outer,
+            function=function,
+            table=table,
+            columns=columns,
+        )
 
     def _parse_join(self, this):
         side = None
@@ -204,6 +322,11 @@ class Parser:
         return this
 
     def _parse_table(self, alias=None):
+        unnest = self._parse_unnest()
+
+        if unnest:
+            return unnest
+
         if self._match(TokenType.L_PAREN):
             nested = self._parse_select()
 
@@ -226,15 +349,42 @@ class Parser:
             expression = exp.Table(this=table, db=db)
 
         if alias:
-            this = exp.Alias(this=expression, to=alias)
+            this = exp.Alias(this=expression, alias=alias)
         else:
             this = self._parse_alias(expression)
 
         # some dialects allow not having an alias after a nested sql
         if this.token_type != TokenType.ALIAS:
-            this = exp.Alias(this=this, to=None)
+            this = exp.Alias(this=this, alias=None)
 
         return this
+
+    def _parse_unnest(self):
+        if not self._match(TokenType.UNNEST):
+            return None
+
+        if not self._match(TokenType.L_PAREN):
+            self.raise_error('Expecting ( after unnest')
+
+        expressions = self._parse_csv(self._parse_id_var)
+
+        if not self._match(TokenType.R_PAREN):
+            self.raise_error('Expecting )')
+
+        ordinality = self._match(TokenType.WITH) and self._match(TokenType.ORDINALITY)
+        self._match(TokenType.ALIAS)
+        table = self._parse_id_var()
+
+        if not self._match(TokenType.L_PAREN):
+            return exp.Unnest(expressions=expressions, ordinality=ordinality, table=table)
+
+        columns = self._parse_csv(self._parse_id_var)
+        unnest = exp.Unnest(expressions=expressions, ordinality=ordinality, table=table, columns=columns)
+
+        if not self._match(TokenType.R_PAREN):
+            self.raise_error('Expecting )')
+
+        return unnest
 
     def _parse_where(self, this):
         if not self._match(TokenType.WHERE):
@@ -244,9 +394,6 @@ class Parser:
     def _parse_group(self, this):
         if not self._match(TokenType.GROUP):
             return this
-
-        if not self._match(TokenType.BY):
-            self.raise_error('Expecting BY')
 
         return exp.Group(this=this, expressions=self._parse_csv(self._parse_primary))
 
@@ -258,9 +405,6 @@ class Parser:
     def _parse_order(self, this):
         if not self._match(TokenType.ORDER):
             return this
-
-        if not self._match(TokenType.BY):
-            self.raise_error('Expecting BY')
 
         return exp.Order(this=this, expressions=self._parse_csv(self._parse_primary), desc=self._match(TokenType.DESC))
 
@@ -407,7 +551,7 @@ class Parser:
         return self._parse_column()
 
     def _parse_column(self):
-        if not self._match(TokenType.VAR, TokenType.IDENTIFIER):
+        if not self._match(TokenType.VAR, TokenType.IDENTIFIER, TokenType.IF):
             return None
 
         db = None
@@ -450,8 +594,6 @@ class Parser:
         partition = None
 
         if self._match(TokenType.PARTITION):
-            if not self._match(TokenType.BY):
-                self.raise_error('Expecting BY after PARTITION')
             partition = self._parse_csv(self._parse_primary)
 
         order = self._parse_order(None)
@@ -464,10 +606,16 @@ class Parser:
     def _parse_alias(self, this):
         self._match(TokenType.ALIAS)
 
-        if self._match(TokenType.IDENTIFIER, TokenType.VAR):
-            return exp.Alias(this=this, to=self._prev)
+        alias = self._parse_id_var()
+        if alias:
+            return exp.Alias(this=this, alias=alias)
 
         return this
+
+    def _parse_id_var(self):
+        if self._match(TokenType.IDENTIFIER, TokenType.VAR):
+            return self._prev
+        return None
 
     def _parse_csv(self, parse):
         items = [parse()]
