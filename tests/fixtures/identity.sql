@@ -1,5 +1,23 @@
+SUM(1)
+SUM(CASE WHEN x > 1 THEN 1 ELSE 0 END) / y
+1
+1.0
+(1 * 2) / (3 - 5)
+'x'
+"x"
+x
+x < 1
+x <= 1
+x > 1
+x >= 1
+x <> 1
+x = y OR x > 1
+1 - -1
+NOT 1
+NOT NOT 1
 SELECT * FROM test
 SELECT *, 1 FROM test
+SELECT 1
 SELECT 1 FROM test
 SELECT a FROM test
 SELECT test.* FROM test
@@ -8,6 +26,9 @@ SELECT "a"."b" FROM "a"
 SELECT "a".b FROM a
 SELECT a.b FROM "a"
 SELECT a.b FROM a
+SELECT '"hi' AS x FROM x
+SELECT 1 AS "|sum" FROM x
+SELECT '\"hi' AS x FROM x
 SELECT 1 AS b FROM test
 SELECT 1 AS "b" FROM test
 SELECT 1 + 1 FROM test
@@ -18,6 +39,7 @@ SELECT 1 < 2 FROM test
 SELECT 1 <= 2 FROM test
 SELECT 1 > 2 FROM test
 SELECT 1 >= 2 FROM test
+SELECT 1 <> 2 FROM test
 SELECT (1 > 2) AS x FROM test
 SELECT NOT (1 > 2) FROM test
 SELECT 1 + 2 AS x FROM test
@@ -93,3 +115,17 @@ SELECT MAP(ARRAY[1], ARRAY[2]) FROM x
 SELECT MAX(ARRAY[1, 2, 3]) FROM x
 SELECT ARRAY[ARRAY[0]][0][0] FROM x
 SELECT MAP[ARRAY['x'], ARRAY[0]]['x'] FROM x
+SELECT student, score FROM tests LATERAL VIEW EXPLODE(scores) t AS score
+SELECT student, score FROM tests LATERAL VIEW EXPLODE(scores) t AS score, name
+SELECT student, score FROM tests LATERAL VIEW OUTER EXPLODE(scores) t AS score, name
+SELECT student, score FROM tests CROSS JOIN UNNEST(scores) AS t (score)
+SELECT student, score FROM tests CROSS JOIN UNNEST(scores) AS t (a, b)
+CREATE TABLE a.b AS SELECT 1
+CREATE TABLE a.b AS SELECT a FROM a.c
+CREATE TABLE IF NOT EXISTS x AS SELECT a FROM d
+CREATE VIEW x AS SELECT a FROM b
+CREATE VIEW IF NOT EXISTS x AS SELECT a FROM b
+DROP TABLE a
+DROP TABLE a.b
+DROP VIEW a
+DROP VIEW a.b

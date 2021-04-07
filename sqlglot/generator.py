@@ -115,13 +115,38 @@ class Generator:
             self.sql(expression, 'this', identify=True),
         ] if part)
 
+    def create_sql(self, expression):
+        this = self.sql(expression, 'this')
+        kind = expression.args['kind'].upper()
+        expression_sql = self.sql(expression, 'expression')
+        exists_sql = ' IF NOT EXISTS ' if expression.args.get('exists') else ' '
+        file_format = self.sql(expression, 'file_format')
+        file_format = f" {file_format} " if file_format else ' '
+        return f"CREATE {kind}{exists_sql}{this}{file_format}AS{self.sep()}{expression_sql}"
+
     def cte_sql(self, expression):
         sql = ', '.join(
-            f"{self.sql(e, 'to')} AS {self.wrap(e)}"
+            f"{self.sql(e, 'alias')} AS {self.wrap(e)}"
             for e in expression.args['expressions']
         )
 
         return f"WITH {sql}{self.sep()}{self.sql(expression, 'this')}"
+
+    def drop_sql(self, expression):
+        this = self.sql(expression, 'this')
+        kind = expression.args['kind'].upper()
+        exists_sql = ' IF EXISTS' if expression.args.get('exists') else ''
+        return f"DROP {kind} {this}{exists_sql}"
+
+    def fileformat_sql(self, expression):
+        if self.sql(expression, 'this'):
+            self.unsupported('File formats are not supported')
+        return ''
+
+    def hint_sql(self, expression):
+        if self.sql(expression, 'this'):
+            self.unsupported('Hints are not supported')
+        return ''
 
     def table_sql(self, expression):
         return '.'.join(part for part in [
@@ -155,6 +180,14 @@ class Generator:
         this_sql = self.sql(expression, 'this')
         return f"{expression_sql}{op_sql} {this_sql}{on_sql}"
 
+    def lateral_sql(self, expression):
+        this_sql = self.sql(expression, 'this')
+        op_sql = self.seg(f"LATERAL VIEW{' OUTER' if expression.args.get('outer') else ''}")
+        expression_sql = self.sql(expression, 'function')
+        alias = self.sql(expression, 'table')
+        columns = ', '.join(self.sql(e) for e in expression.args.get('columns', []))
+        return f"{this_sql}{op_sql}{self.sep()}{expression_sql} {alias} AS {columns}"
+
     def order_sql(self, expression, flat=False):
         sql = self.op_expressions('ORDER BY', expression, flat=flat)
         if expression.args['desc']:
@@ -162,11 +195,19 @@ class Generator:
         return sql
 
     def select_sql(self, expression):
-        return f"SELECT{self.sep()}{self.expressions(expression)}"
+        return f"SELECT{self.sql(expression, 'hint')}{self.sep()}{self.expressions(expression)}"
 
     def union_sql(self, expression):
         distinct = '' if expression.args['distinct'] else ' ALL'
         return self.op_expression(f"UNION{distinct}", expression, pad=0)
+
+    def unnest_sql(self, expression):
+        args = self.expressions(expression, flat=True)
+        table = self.sql(expression, 'table')
+        columns = ', '.join(self.sql(e) for e in expression.args.get('columns', []))
+        alias = f" AS {table}" if table else ''
+        alias = f"{alias} ({columns})" if columns else alias
+        return f"UNNEST({args}){alias}"
 
     def where_sql(self, expression):
         return self.op_expression('WHERE', expression)
@@ -232,7 +273,7 @@ class Generator:
 
     def alias_sql(self, expression):
         this_sql = self.sql(expression, 'this')
-        to_sql = self.sql(expression, 'to')
+        to_sql = self.sql(expression, 'alias')
         to_sql = f" AS {to_sql}" if to_sql else ''
 
         if expression.args['this'].token_type in self.BODY_TOKENS:
@@ -245,7 +286,7 @@ class Generator:
         return self.binary(expression, 'AND')
 
     def cast_sql(self, expression):
-        return f"CAST({self.sql(expression, 'this')} AS {self.sql(expression.args['to'])})"
+        return f"CAST({self.sql(expression, 'this')} AS {self.sql(expression, 'to')})"
 
     def count_sql(self, expression):
         distinct = 'DISTINCT ' if expression.args['distinct'] else ''
@@ -274,6 +315,9 @@ class Generator:
 
     def minus_sql(self, expression):
         return self.binary(expression, '-')
+
+    def neq_sql(self, expression):
+        return self.binary(expression, '<>')
 
     def or_sql(self, expression):
         return self.binary(expression, 'OR')
